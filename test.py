@@ -1,9 +1,13 @@
 import requests
+import sqlite3
 import hmac
 import hashlib
 
 from datetime import datetime
 
+# initialization
+connection = sqlite3.connect("trading.db")
+db = connection.cursor()
 
 main_point = "https://api.binance.com"
 
@@ -37,21 +41,34 @@ symbol_info = "/api/v3/exchangeInfo"
 # текущая средняя цена символа
 cyrent_avarage_price = "/api/v3/avgPrice"
 
-def main():
+def create_binance_tikers_table():
+    """ create table for all tikers in binance"""
 
     data = requests.get(main_point + symbol_info)
 
-    print("request code : ")
-    print(data.status_code)
-    print("request headers : ")
-    print(data.headers)
-    print("request body : ")
     data = data.json()
     data = data["symbols"]
-    data = [item["symbol"] for item in data]
+    data = tuple([{"symbol": item["symbol"], "master": item["baseAsset"], "satelite": item["quoteAsset"] } for item in data])
     
-    for item in data:
-        print(requests.get(main_point + cyrent_avarage_price + "?symbol=" + item).json())
+    db.executemany("INSERT INTO binance_tikers (tiker, master, satelite) VALUES(:symbol, :master, :satelite)", data)
+    connection.commit()
+    
+    connection.close()
+      
+    return True
+    
 
-    
-print(requests.get(main_point + cyrent_avarage_price + "?symbol=BEAMUSDT").json())
+def price_request():
+    data = db.execute("SELECT id, tiker FROM binance_tikers").fetchall()
+    data = [{"id": item[0], "tiker": item[1]} for item in data]
+
+    for item in data:
+
+        price_request = requests.get(main_point + cyrent_avarage_price + "?symbol=" + item["tiker"]).json()
+
+        query = ("INSERT INTO binance_prices (tiker_id, cyrent_price) VALUES (?, ?)")
+        
+        query = db.execute(query, (item["id"], price_request["price"]))
+
+
+def temp():
