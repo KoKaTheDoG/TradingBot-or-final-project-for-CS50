@@ -5,6 +5,11 @@ import hashlib
 
 from datetime import datetime
 
+""" This will look for arbitrage on binance. 
+    The idea is to generate all chains with the same start and end. 
+    If it is possible to come from beginning to end at different prices, 
+    a circle is formed: start -> cheap_route -> end -> expensive_route -> start """
+
 # initialization
 connection = sqlite3.connect("trading.db")
 db = connection.cursor()
@@ -41,6 +46,41 @@ symbol_info = "/api/v3/exchangeInfo"
 # текущая средняя цена символа
 cyrent_avarage_price = "/api/v3/avgPrice"
 
+def main():
+    chains = create_chains_table()
+
+    for item in chains:
+        item["weight"] = []
+        for chain in item["middle_points"]:
+            item["weight"].append(price_request(item["start"], chain, item["end"]))
+
+        min_weight = item["weight"].index(min(item["weight"]))
+        max_weight = item["weight"].index(max(item["weight"]))
+
+        item["min"] = item["middle_points"][min_weight]
+        item["max"] = item["middle_points"][max_weight]
+        item["route"] = [item["start"], item["min"], item["end"], item["max"], item["start"]]
+        item["profit"] = (item["weight"][max_weight] - item["weight"][min_weight]) / item["weight"][max_weight]
+
+        print(item["route"])
+        print(item["profit"])
+        print()
+        print("=" * 100)
+        print()
+
+    
+            
+
+        
+
+
+
+def get_from_db(data):
+    """ help for db.execute(SELECT .....).fetchall()"""
+    
+    return [item[0] for item in data]
+
+
 def create_binance_tikers_table():
     """ create table for all tikers in binance"""
 
@@ -54,47 +94,66 @@ def create_binance_tikers_table():
     connection.commit()
     
 
-def price_request():
+def price_request(start, middle, end):
+    
+    first = requests.get(main_point + cyrent_avarage_price + "?symbol=" + middle + start).json()
+    first = first["price"]
+    second = requests.get(main_point + cyrent_avarage_price + "?symbol=" + middle + end).json()
+    second = second["price"]
 
-    data = db.execute("SELECT id, tiker FROM binance_tikers").fetchall()
-    data = [{"id": item[0], "tiker": item[1]} for item in data]
+    weight = 1 / float(first) * float(second)
+    
 
-    for item in data:
-
-        price_request = requests.get(main_point + cyrent_avarage_price + "?symbol=" + item["tiker"]).json()
-
-        query = ("INSERT INTO binance_prices (tiker_id, cyrent_price) VALUES (?, ?)")
-        
-        query = db.execute(query, (item["id"], price_request["price"]))
+    return weight
 
 
 def create_chains_table():
 
-    data = db.execute("SELECT master,satelite FROM binance_tikers GROUP BY master").fetchall()   
- 
-    result = [{"start": item[0], "traces":[{"trace": item[0] + "-" + item[1], "position": item[1], "iteration": 0}]} for item in data]
+    """ function for generation traiding chains, 
+        return list of {"start":<value>, "end":<value>, "middle_points": <[list_of_values]> } """
+    
+    print("[  OK  ] Start generate chains")
+    
+    # init
+    chains = []
 
-    for item in result:
-        for temp_trace in item["traces"]:
-          
-            if temp_trace["iteration"] < 5:
-                query = db.execute("SELECT satelite FROM binance_tikers WHERE master = ?", (temp_trace["position"],))
-                query = [temp[0] for temp in query] 
-                now = temp_trace
-                now_index = item["traces"].index(temp_trace)
-                
-                for value in query: 
-                    item["traces"].append({"trace": now["trace"] + "-" + value, "position": value, "iteration": temp_trace["iteration"] + 1})
+    # get main points
+    main_coins = get_from_db(db.execute("SELECT satelite FROM binance_tikers GROUP BY satelite").fetchall())
+    
+    # using each element in main_coins as start point, generates all posible end points as main_coins without start point
+    for start in main_coins:
+        
+        ends = [end for end in main_coins if end != start]
+        
+        for end in ends:
 
-                item["traces"].pop(now_index)
-            
-    for item in result:
-        for val in item["traces"]:
-           
-            query = ("INSERT INTO binance_chains (chain) VALUES (?)")
-            query = db.execute(query, (val["trace"],))
-            connection.commit()
+            chains.append({"start": start, "end": end})
+
+    print("[  OK  ] Generate base points")
+
+    # create all middle 
+    for item in chains:
+        
+        middle_points_for_start = get_from_db(db.execute("SELECT master FROM binance_tikers WHERE satelite = ?", (item["start"],)).fetchall())
+        middle_points_for_end = get_from_db(db.execute("SELECT master FROM binance_tikers WHERE satelite = ?", (item["end"],)).fetchall())
+        middle_points = [item for item in middle_points_for_start if item in middle_points_for_end and item not in main_coins]
+        
+        
+        if len(middle_points) <= 1:
+            item["middle_points"] = None
+
+        else:
+            item["middle_points"] = middle_points
+
+    chains = [item for item in chains if item["middle_points"]]
+
+    print("[  OK  ] Generate middle points")
+    print()
+    print("=" * 100)
+    print()
+
+    return chains
 
 
-create_chains_table()
+main()
 connection.close()
