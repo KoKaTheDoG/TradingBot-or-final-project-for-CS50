@@ -47,9 +47,78 @@ symbol_info = "/api/v3/exchangeInfo"
 cyrent_avarage_price = "/api/v3/avgPrice"
 
 def main():
-    chains = create_chains_table()
+    #create_binance_tikers_table()
+    chains = create_all_chains()
+    find_profit_chains(chains)
+    
 
+def trading_init(chain):
+    """building an algorithm for making transactions"""
+    
+    # buy first coin
+    first_coin = chain["start"] + "USDT"
+    #### TODO make bying first coin here
+
+    # in steps tradind sequence
+    steps = []
+
+     # make steps
+    steps.append({"symbol": chain["max"] + chain["start"], "side": "BUY"})
+    steps.append({"symbol": chain["max"] + chain["end"], "side": "SELL"})
+    steps.append({"symbol": chain["min"] + chain["end"], "side": "BUY"})
+    steps.append({"symbol": chain["min"] + chain["start"], "side": "SELL"})
+
+    # output on display block
+    print()
+    print("-" * 100)
+    print("[  OK  ]  Initialization trade with : ")
+    print(chain["route"])
+    print("waiting profit : "+ str(int(chain["profit"] * 100)) + "% * start coin price")
+    print()
+    print("step 1 : BUY " + chain["max"] + chain["start"] )
+    print("step 2 : SELL " + chain["max"] + chain["end"] )
+    print("step 3 : BUY " + chain["min"] + chain["end"] )
+    print("step 2 : SELL " + chain["min"] + chain["start"] )
+
+    return [steps, first_coin]
+
+
+def test_mode(steps, first_coin):
+
+    # test chain
+
+    print(" Testing chain :")
+
+    for item in steps:
+        
+        item["price"] = requests.get(main_point + cyrent_avarage_price + "?symbol=" + item["symbol"]).json()["price"]
+
+        print(item["symbol"] + " " + item["price"])
+
+    # calculate start coin quantity as 10 USDT/start coin price
+    quantity = 10/float(requests.get(main_point + cyrent_avarage_price + "?symbol=" + first_coin).json()["price"])
+
+    print("quantity: ")
+    print(quantity)
+
+    profit = quantity/float(steps[0]["price"]) * float(steps[1]["price"]) * 1/float(steps[2]["price"]) * float(steps[3]["price"]) 
+    
+    print("profit: ")
+    print((profit - quantity) * float(steps[0]["price"]), end = "  ")
+    print(steps[0]["symbol"])
+
+    # calculate comission
+
+    
+
+
+
+
+        
+def find_profit_chains(chains):
+    """find profit chains"""
     for item in chains:
+
         item["weight"] = []
         for chain in item["middle_points"]:
             item["weight"].append(price_request(item["start"], chain, item["end"]))
@@ -59,20 +128,21 @@ def main():
 
         item["min"] = item["middle_points"][min_weight]
         item["max"] = item["middle_points"][max_weight]
-        item["route"] = [item["start"], item["min"], item["end"], item["max"], item["start"]]
-        item["profit"] = (item["weight"][max_weight] - item["weight"][min_weight]) / item["weight"][max_weight]
 
-        print(item["route"])
-        print(item["profit"])
-        print()
-        print("=" * 100)
-        print()
+        item["route"] = [item["start"], item["max"], item["end"], item["min"], item["start"]]
+        item["profit"] = (item["weight"][max_weight] - item["weight"][min_weight])/item["weight"][min_weight]
 
-    
+        if item["profit"] > 0.01:
             
+            # may be this not goob here
+            print(item["route"])
+            print(item["profit"])
+            
+            print()
+            print("=" * 100)
+            print()
 
-        
-
+            trading_init(item)
 
 
 def get_from_db(data):
@@ -87,27 +157,32 @@ def create_binance_tikers_table():
     data = requests.get(main_point + symbol_info)
 
     data = data.json()
+    
     data = data["symbols"]
-    data = tuple([{"symbol": item["symbol"], "master": item["baseAsset"], "satelite": item["quoteAsset"] } for item in data])
+    data = tuple([{"symbol": item["symbol"], "master": item["baseAsset"], "satelite": item["quoteAsset"] } for item in data if item["status"] != "BREAK"])
     
     db.executemany("INSERT INTO binance_tikers (tiker, master, satelite) VALUES(:symbol, :master, :satelite)", data)
     connection.commit()
     
 
 def price_request(start, middle, end):
-    
+    """return weight - some quality end coins whixh we can buy for one start coin"""
+
+    # price for first pair as buy some middle for 1 start
     first = requests.get(main_point + cyrent_avarage_price + "?symbol=" + middle + start).json()
+    # if invalid symbol it make exeption
     first = first["price"]
+    # price for second pair as sell some middle for some end
     second = requests.get(main_point + cyrent_avarage_price + "?symbol=" + middle + end).json()
     second = second["price"]
 
-    weight = 1 / float(first) * float(second)
+    weight = (1 / float(first)) * float(second)
     
 
     return weight
 
 
-def create_chains_table():
+def create_all_chains():
 
     """ function for generation traiding chains, 
         return list of {"start":<value>, "end":<value>, "middle_points": <[list_of_values]> } """
